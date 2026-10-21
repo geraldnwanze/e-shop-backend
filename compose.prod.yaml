@@ -1,0 +1,90 @@
+# Production stack for a single small VPS.
+#
+#   cp .env.production.example .env.production      # then edit every CHANGE_ME
+#   docker compose --env-file .env.production -f compose.prod.yaml up -d --build
+#   docker compose --env-file .env.production -f compose.prod.yaml run --rm app php artisan migrate --force
+#
+# Put TLS in front of port 80 (Cloudflare proxy, or a reverse proxy / tunnel on the host).
+# Scale workers independently:  ... up -d --scale queue=3
+
+name: shop
+
+x-app: &app
+  build:
+    context: .
+    target: app
+  image: ${APP_IMAGE:-shop-app:latest}
+  env_file: .env.production
+  restart: unless-stopped
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis: { condition: service_healthy }
+
+services:
+  app:
+    <<: *app
+    # Opt in to migrations on start only when you deploy a single web container:
+    #   environment: { RUN_MIGRATIONS: "true" }
+    healthcheck:
+      test: ["CMD-SHELL", "php-fpm -t >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  nginx:
+    build:
+      context: .
+      target: nginx
+    image: ${NGINX_IMAGE:-shop-nginx:latest}
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    depends_on:
+      - app
+
+  queue:
+    <<: *app
+    command: php artisan queue:work redis --queue=default --sleep=1 --tries=3 --backoff=10 --max-time=3600 --memory=256
+    stop_grace_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+
+  scheduler:
+    <<: *app
+    command: php artisan schedule:work
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_DATABASE}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # volatile-lru only evicts keys that expire (cache, sessions), never queued jobs, so a full cache cannot lose work.
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}", "--maxmemory", "${REDIS_MAXMEMORY:-512mb}", "--maxmemory-policy", "volatile-lru"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" --no-auth-warning ping | grep -q PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+volumes:
+  pgdata:
+  redisdata:

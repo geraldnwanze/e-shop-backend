@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "api",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "PLATFORM_DOMAIN=e-shop.test APP_URL=http://api.e-shop.test FRONTEND_URL=http://app.e-shop.test TRUSTED_PROXIES='*' php artisan serve --host=127.0.0.1 --port=8000"],
+      "port": 8000
+    },
+    {
+      "name": "storefront",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd /Users/gerald/Desktop/projects/nextjs/e-shop-frontend && PLATFORM_DOMAIN=e-shop.test STOREFRONT_SCHEME=http API_URL=http://127.0.0.1:8000/api/v1 npx next dev --port 3000"],
+      "port": 3000
+    }
+  ]
+}
